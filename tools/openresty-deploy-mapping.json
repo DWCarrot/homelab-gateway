@@ -1,0 +1,33 @@
+[
+    {
+        "source": "./conf/",
+        "target": "/usr/local/openresty/nginx/conf/",
+        "filter": {
+            "match": "([\\w\\._-]+)\\.t\\.conf",
+            "rename": "{0}.conf"
+        },
+        "template": true
+    },
+    {
+        "source": "./html/",
+        "target": "/usr/local/openresty/nginx/html/",
+        "template": false
+    },
+    {
+        "source": "./web-mcping/dist/",
+        "target": "/usr/local/openresty/nginx/html/mcping/",
+        "template": false
+    },
+    {
+        "source": "./lua/",
+        "target": "/usr/local/openresty/nginx/lua/",
+        "filter": "([\\w\\._-]+)\\.lua",
+        "template": false
+    },
+    {
+        "source": "./openresty.service",
+        "target": "/usr/local/lib/systemd/system/",
+        "template": false,
+        "mode": "once"
+    }
+]

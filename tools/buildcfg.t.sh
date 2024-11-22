@@ -1,0 +1,41 @@
+#!/bin/bash
+
+./configure \
+--error-log-path=/var/log/openresty/error.log \
+--http-log-path=/var/log/openresty/access.log \
+--pid-path=/var/run/openresty.pid \
+--lock-path=/var/run/openresty.lock \
+--user={{ nginx.user }} \
+--group={{ nginx.group }} \
+--with-compat \
+--with-file-aio \
+--with-threads \
+--with-http_addition_module \
+--with-http_auth_request_module \
+--with-http_dav_module \
+--add-dynamic-module={{ "build.nginx-dav-ext-module" }} \
+--with-http_gunzip_module \
+--with-http_gzip_static_module \
+--with-http_random_index_module \
+--with-http_realip_module \
+--with-http_secure_link_module \
+--with-http_slice_module \
+--with-http_ssl_module \
+--with-http_stub_status_module \
+--with-http_sub_module \
+--with-http_v2_module \
+--with-http_v3_module \
+--with-http_xslt_module \
+--with-stream \
+--with-stream_realip_module \
+--with-stream_ssl_module \
+--with-stream_ssl_preread_module \
+--without-http_fastcgi_module \
+--without-http_uwsgi_module \
+--without-http_scgi_module \
+--without-pcre2 \
+--with-pcre-jit \
+--with-pcre={{ "build.libpcre" }} \
+--with-zlib={{ "build.libzlib" }} \
+--with-openssl={{ "build.libssl" }} \
+-j4
