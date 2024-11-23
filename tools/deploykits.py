@@ -144,12 +144,13 @@ class DeployKit:
             return True
         new_hash = None
         if mode & FileDeploymentMode.Once:
+            new_hash = self._get_file_hash(source)
             rec_hash = self.record.get(source)
             if rec_hash:
-                new_hash = self._get_file_hash(source)
                 if rec_hash == new_hash:
                     self.logger.info('file %s not changed', source)
                     return True
+            self.record[source] = new_hash
         copyfile(source, target)
         self.logger.info('deployed file %s to %s', source, target)
         if new_hash:
@@ -162,7 +163,7 @@ class DeployKit:
     def _sync_file_record(self) -> None:
         try:
             with open(self.record_file, 'w') as ofile:
-                json_dump(self.record, ofile)
+                json_dump(self.record, ofile, indent=4)
         except Exception as e:
             self.logger.error('failed to write record file %s: %s', self.record_file, e)
         

@@ -116,5 +116,12 @@ if __name__ == '__main__':
         output_file = path.join(output_dir, OUTPUT_FILE)
     print(input_file, '==>', output_file)
     template = Template(input_file)
+    for key in template.vars.keys():
+        value = variables[key]
+        if value is None:
+            value = input(f'please input value for {key}: ')
+            if value:
+                variables[key] = value
+    variables.sync()
     with open(output_file, 'w') as output:
         template.render_into(variables, output)

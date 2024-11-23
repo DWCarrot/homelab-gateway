@@ -28,6 +28,6 @@
         "source": "./openresty.service",
         "target": "/usr/local/lib/systemd/system/",
         "template": false,
-        "mode": "once"
+        "once": true
     }
 ]
