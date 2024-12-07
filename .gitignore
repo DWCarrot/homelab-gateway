@@ -173,3 +173,7 @@ cython_debug/
 
 # Generate files
 *.g.sh
+
+# Log files
+logs
+logs/

@@ -1,4 +1,3 @@
-local InetAddress = require "inetaddr"
 local new_tab = require "table.new"
 local clear_tab = require "table.clear"
 local cidr = require "libcidr-ffi"

@@ -22,5 +22,13 @@ return {
             "127.0.0.1/8",
             "::1/128",
         }
-    }
+    },
+    --#endregion
+
+    --#region [config for signaling]
+    signaling = {
+        max_timeout_s = 60,
+        max_peers = 16,
+    },
+    --#endregion
 }
