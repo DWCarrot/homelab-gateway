@@ -33,6 +33,16 @@
 
    `tar zxvf` 解压到 `workspace`
 
+----
+
+### 以上下载源码(不包括安装 libxslt-dev 依赖) 可以使用
+
+```shell
+python3 -m tools.sourcekits
+```
+
+----
+
 5. 配置编译指令
 
    `cd` 到 OpenResty 源码库 下
@@ -82,6 +92,16 @@
    --with-openssl=../openssl-3.3.0 \
    -j2
    ```
+----
+
+### 以上 配置编译选项可以使用
+
+```shell
+python3 -m tools.template
+```
+
+----
+
 
 6. 编译
 
@@ -211,9 +231,16 @@
     sudo systemctl enable openresty.service
     ```
 
-    
+----
 
-12. -
+### 以上 部署 可以使用
+
+```shell
+python3 -m tools.deploykits
+
+```
+
+----
 
 #### 安装统计
 

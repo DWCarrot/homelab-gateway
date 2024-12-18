@@ -2,9 +2,9 @@ from enum import IntFlag
 import hashlib
 from json import load as json_load, dump as json_dump
 from logging import Logger, getLogger
-from os import name as os_name, walk as os_walk, makedirs as os_makedirs, path
+from os import name as os_name, walk as os_walk, makedirs as os_makedirs, path, remove as os_remove
 import re
-from shutil import copyfile
+from shutil import copyfile, rmtree
 from typing import Dict, List, Optional, Union
 
 from .template import Template
@@ -18,6 +18,7 @@ class FileDeploymentMode(IntFlag):
     Default = 0,
     Template = 1,
     Once = 2,
+    Clear = 4,
 
 class FileFilter(object):
 
@@ -51,6 +52,8 @@ class CfgItemFileDeployment(object):
         if args.get('template', False):
             self.mode |= FileDeploymentMode.Template
             self.mode &= ~FileDeploymentMode.Once
+        if args.get('clear', False):
+            self.mode |= FileDeploymentMode.Clear
         
         
 
@@ -80,6 +83,25 @@ class DeployKit:
 
     def deploy(self, cfg: CfgItemFileDeployment) -> None:
         if path.isdir(cfg.source):
+            if cfg.mode & FileDeploymentMode.Clear:
+                for dirpath, dirnames, filenames in os_walk(cfg.target):
+                    for filename in filenames:
+                        target = path.join(dirpath, filename)
+                        try:
+                            os_remove(target)
+                        except Exception as e:
+                            self.logger.error('failed to remove file %s: %s in clear mode', target, e)
+                    self.logger.debug('clear folder %s of %s', cfg.target, filenames)
+                    for dirname in dirnames:
+                        target = path.join(dirpath, dirname)
+                        try:
+                            rmtree(target)
+                        except Exception as e:
+                            self.logger.error('failed to remove directory %s: %s in clear mode', target, e)
+                    self.logger.debug('clear folder %s of %s', cfg.target, dirnames)
+                    break
+                self.logger.debug('clear folder %s', cfg.target)
+
             for dirpath, dirnames, filenames in os_walk(cfg.source):
                 rel_dir_path = path.relpath(dirpath, cfg.source)
                 for filename in filenames:

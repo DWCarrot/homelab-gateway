@@ -28,11 +28,13 @@
     {
         "source": "./web-mcping/dist/",
         "target": "/usr/local/openresty/nginx/html/mcping/",
-        "template": false
+        "template": false,
+        "clear": true
     },
     {
         "source": "./webrtc-transfer/dist/",
         "target": "/usr/local/openresty/nginx/html/transfer/",
-        "template": false
+        "template": false,
+        "clear": true
     }
 ]
