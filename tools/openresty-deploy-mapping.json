@@ -14,11 +14,6 @@
         "template": false
     },
     {
-        "source": "./web-mcping/dist/",
-        "target": "/usr/local/openresty/nginx/html/mcping/",
-        "template": false
-    },
-    {
         "source": "./lua/",
         "target": "/usr/local/openresty/nginx/lua/",
         "filter": "([\\w\\._-]+)\\.lua",
@@ -29,5 +24,15 @@
         "target": "/usr/local/lib/systemd/system/",
         "template": false,
         "once": true
+    },
+    {
+        "source": "./web-mcping/dist/",
+        "target": "/usr/local/openresty/nginx/html/mcping/",
+        "template": false
+    },
+    {
+        "source": "./webrtc-transfer/dist/",
+        "target": "/usr/local/openresty/nginx/html/transfer/",
+        "template": false
     }
 ]
