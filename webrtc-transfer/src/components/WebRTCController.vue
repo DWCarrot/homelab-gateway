@@ -3,6 +3,7 @@ import { computed, reactive, ref } from "vue";
 import { context } from "../context";
 import { WebRTCServiceStatus, DemoNegotiator, ConnectionInfo } from "../webrtcsvc";
 import { Input, Button, Row, Col } from "ant-design-vue";
+import { StarOutlined } from "@ant-design/icons-vue";
 
 interface MutableConnectionInfo extends ConnectionInfo {
     localId: string;
@@ -22,7 +23,7 @@ const status = ref<WebRTCServiceStatus>("idle");
 const btnText = computed(() => {
     switch (status.value) {
         case "idle":
-            return "Create";
+            return "Connect";
         case "new":
             return "Connect";
         case "connected":
@@ -34,7 +35,7 @@ const btnText = computed(() => {
         case "closed":
         case "disconnected":
         case "failed":
-            return "Reset";
+            return "Disconnect";
         default:
             return "";
     }
@@ -50,10 +51,37 @@ const btnDisabled = computed(() => {
     }
 });
 
+const connectingExtInfo = ref<string>("");
+const connectionError = ref<string>("");
+
 let pc: RTCPeerConnection | null = null;
 
 function onWebRTCConnectionStateChange(ev: Event) {
+    const pc = ev.target as RTCPeerConnection;
+    switch (pc.iceConnectionState) {
+        case "checking":
+            connectingExtInfo.value = "ICE Checking";
+            break;
+        case "connected":
+            connectingExtInfo.value = "ICE Connected";
+            break;
+        default:
+            break;
+    }
+}
 
+function onWebRTCICEGatheringStateChange(ev: Event) {
+    const pc = ev.target as RTCPeerConnection;
+    switch (pc.iceGatheringState) {
+        case "gathering":
+            connectingExtInfo.value = "ICE Gathering";
+            break;
+        case "complete":
+            connectingExtInfo.value = "ICE Gathered";
+            break;
+        default:
+            break;
+    }
 }
 
 function onWebRTCServiceStatusChange(s: WebRTCServiceStatus) {
@@ -66,11 +94,13 @@ context.webrtc.onStatusChange(onWebRTCServiceStatusChange);
 context.webrtc.registerPeerConnection(
     function (peer: RTCPeerConnection) {
         pc = peer;
-        peer.addEventListener("connectionstatechange", onWebRTCConnectionStateChange);
+        peer.addEventListener("iceconnectionstatechange", onWebRTCConnectionStateChange);
+        peer.addEventListener("icegatheringstatechange", onWebRTCICEGatheringStateChange);
         status.value = peer.connectionState;
     },
     function (peer: RTCPeerConnection) {
-        peer.removeEventListener("connectionstatechange", onWebRTCConnectionStateChange);
+        peer.removeEventListener("icegatheringstatechange", onWebRTCICEGatheringStateChange);
+        peer.removeEventListener("iceconnectionstatechange", onWebRTCConnectionStateChange);
         pc = null;
         status.value = "idle";
     },
@@ -82,16 +112,22 @@ function execute() {
     if (status.value === "idle") {
         console.debug("WebRTCController execute Create");
         context.webrtc.create(context.config.webrtc);
+        setTimeout(execute, 500);
     } else if (status.value === "new") {
         if (info.channelId && info.localId) {
             console.debug("WebRTCController execute Connect", info.channelId, info.localId);
             const negotiator = new DemoNegotiator(info.localId, info.channelId);
-            context.webrtc.connect(negotiator, context.config.offer).then(resp => Object.assign(info, resp));
+            context.webrtc.connect(negotiator, context.config.offer)
+                .then(resp => Object.assign(info, resp))
+                .catch(err => {
+                    connectionError.value = err;
+                });
             status.value = "connecting";
         }
     } else if (status.value === "connected") {
         console.debug("WebRTCController execute Disconnect");
         context.webrtc.close();
+        setTimeout(execute, 1000);
     } else {
         console.debug("WebRTCController execute Reset");
         context.webrtc.reset();
@@ -114,38 +150,37 @@ const wrapperCol = {
     <div>
         <Row align="middle">
             <Col span="1">
-            <label>Peer</label>
+                <label>Peer</label>
             </Col>
             <Col span="6">
-            <Input v-model:value="info.localId" class="input-webrtc" />
+                <Input v-model:value="info.localId" class="input-webrtc" />
             </Col>
         </Row>
         <Row align="middle">
             <Col span="1">
-            <label>Room</label>
+                <label>Room</label>
             </Col>
             <Col span="6">
-            <Input v-model:value="info.channelId" class="input-webrtc" />
+                <Input v-model:value="info.channelId" class="input-webrtc" />
             </Col>
         </Row>
-        <Row align="middle">
+        <Row align="middle" v-bind:gutter="16">
             <Col>
                 <Button v-bind:loading="btnDisabled" v-on:click="execute">{{ btnText }}</button>
             </Col>
             <Col>
-                <span v-if="status === 'idle'">🔘</span>
-                <span v-if="status === 'new' || status === 'disconnected' || status === 'closed'">🔵</span>
-                <span v-if="status === 'connecting'">🟡</span>
+                <span v-if="status === 'connecting'">{{ connectingExtInfo }}</span>
                 <span v-if="status === 'connected'">
-                    <span>🟢</span>
+                    <span v-if="info.primary">
+                        <StarOutlined />
+                    </span>
                     <span>{{ info.localId }}</span>
-                    <span v-if="info.primary">1️⃣</span>
                     <span>
                         &lt;===&gt;
                     </span>
                     <span>{{ info.remoteId }}</span>
                 </span>
-                <span v-if="status === 'failed'">🔴</span>
+                <span v-if="status === 'failed'">{{ connectionError }}</span>
             </Col>
         </Row>
     </div>

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, defineEmits, defineProps, CSSProperties } from "vue";
 import { Configuration } from "../context";
-import { Form, FormItem, Divider, Space, Drawer, Button, Input, Select, SelectOption, RadioGroup, RadioButton } from "ant-design-vue";
+import { Form, FormItem, Divider, Space, Drawer, Checkbox, Button, Input, Select, SelectOption, RadioGroup, RadioButton } from "ant-design-vue";
 import { MinusCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, QuestionCircleOutlined } from "@ant-design/icons-vue";
 
 
@@ -26,6 +26,7 @@ interface ConfigurationRaw {
             credential: string;
             url: [string, string];
             username: string;
+            inUse: boolean;
         }[];
         bundlePolicy: "balanced" | "max-bundle" | "max-compat" | "unset";
         //certificates?: RTCCertificate[];
@@ -70,8 +71,9 @@ function transferCfgICEServer(item: ConfigurationRaw["webrtc"]["iceServers"][0])
 
 function transferCfgWebRTC(item: ConfigurationRaw["webrtc"]): Configuration["webrtc"] {
     let value: Configuration["webrtc"] = {};
-    if (item.iceServers) {
-        value.iceServers = item.iceServers.map(transferCfgICEServer);
+    const inUsedICEServers = item.iceServers.filter((e) => e.inUse);
+    if (inUsedICEServers) {
+        value.iceServers = inUsedICEServers.map(transferCfgICEServer);
     }
     if (item.bundlePolicy !== "unset") {
         value.bundlePolicy = item.bundlePolicy;
@@ -118,7 +120,8 @@ function loadFromStorage(key: string): ConfigurationRaw {
                 {
                     credential: "",
                     url: ["stun:", "stun.miwifi.com"],
-                    username: ""
+                    username: "",
+                    inUse: true
                 }
             ],
             bundlePolicy: "unset",
@@ -170,7 +173,8 @@ function addICEServer() {
     dataRaw.value.webrtc.iceServers.push({
         credential: "",
         url: ["stun:", "stun.l.google.com"],
-        username: ""
+        username: "",
+        inUse: true
     });
 };
 
@@ -252,6 +256,9 @@ const drawerFooterStyle: CSSProperties = {
                     <div>
                         <Space v-for="(iceServer, index) in dataRaw.webrtc.iceServers" v-bind:key="index"
                             style="display: flex; margin-bottom: 8px" align="baseline">
+                            <FormItem v-bind:name="['webrtc', 'iceServers', index, 'inUse']">
+                                <Checkbox v-model:checked="iceServer.inUse"></Checkbox>
+                            </FormItem>
                             <FormItem v-bind:name="['webrtc', 'iceServers', index, 'url']">
                                 <Input v-model:value="iceServer.url[1]">
                                 <template #addonBefore>
