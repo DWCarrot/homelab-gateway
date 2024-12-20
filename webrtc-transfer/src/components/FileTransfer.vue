@@ -2,8 +2,8 @@
 import { computed, createVNode, defineProps, Ref, ref } from "vue";
 import { Dual } from "../webrtcsvc";
 import { context, generateUUID } from "../context";
-import { Modal, Row, Col, Button, Progress, ProgressProps } from "ant-design-vue";
-import { BasicFileWriter, FileReceiveService, FileSend, FileInfo, IFileWriter, ProgressCallback, ProgressStep } from "../fileoperator";
+import { Modal, Row, Col, Button, Progress } from "ant-design-vue";
+import { BasicFileWriter, FileReceiveService, FileSend, FileInfo, IFileWriter, ProgressCallback, ProgressStep } from "../filetransfer";
 
 const props = defineProps<{
     channelName: string;
