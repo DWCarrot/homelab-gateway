@@ -119,6 +119,11 @@ export interface Configuration {
     webrtc: RTCConfiguration;
 
     offer: RTCOfferOptions;
+
+    api: {
+
+        download: "blob" | "filesystem";
+    }
 }
 
 
@@ -146,6 +151,9 @@ export const context: Context = {
         },
         offer: {
         
+        },
+        api: {
+            download: "blob",
         },
     },
 };

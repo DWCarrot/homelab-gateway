@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, watch, defineEmits, defineProps, CSSProperties } from "vue";
+import { ref, watch, defineEmits, defineProps, CSSProperties, computed } from "vue";
 import { Configuration } from "../context";
 import { Form, FormItem, Divider, Space, Drawer, Checkbox, Button, Input, Select, SelectOption, RadioGroup, RadioButton } from "ant-design-vue";
 import { MinusCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, QuestionCircleOutlined } from "@ant-design/icons-vue";
+import { FileSystemAPIWriter } from "../fsapi-writer";
 
 
 const props = defineProps<{
@@ -38,6 +39,9 @@ interface ConfigurationRaw {
         iceRestart: ThreeState;
         offerToReceiveAudio: ThreeState;
         offerToReceiveVideo: ThreeState;
+    },
+    api: {
+        download: "blob" | "filesystem";
     }
 }
 
@@ -98,23 +102,35 @@ function transferCfgOffer(item: ConfigurationRaw["offer"]): Configuration["offer
     return value;
 }
 
-function transfer(cfg: ConfigurationRaw): Configuration {
+function transferCfgAPI(item: ConfigurationRaw["api"]): Configuration["api"] {
     return {
-        webrtc: transferCfgWebRTC(cfg.webrtc),
-        offer: transferCfgOffer(cfg.offer)
+        download: item.download
     };
 }
 
-function loadFromStorage(key: string): ConfigurationRaw {
-    let raw = localStorage.getItem(key);
-    try {
-        if (raw) {
-            return JSON.parse(raw);
-        }
-    } catch (e) {
-        console.error(e);
-    }
+function transfer(cfg: ConfigurationRaw): Configuration {
     return {
+        webrtc: transferCfgWebRTC(cfg.webrtc),
+        offer: transferCfgOffer(cfg.offer),
+        api: transferCfgAPI(cfg.api)
+    };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function merge(src: { [key: string]: any }, tgt: { [key: string]: any }) {
+    for (const key in src) {
+        if (key in tgt) {
+            if (typeof src[key] === "object") {
+                merge(src[key], tgt[key]);
+            } else {
+                tgt[key] = src[key];
+            }
+        }
+    }
+}
+
+function loadFromStorage(key: string): ConfigurationRaw {
+    let cfg: ConfigurationRaw = {
         webrtc: {
             iceServers: [
                 {
@@ -131,8 +147,21 @@ function loadFromStorage(key: string): ConfigurationRaw {
             iceRestart: "unset",
             offerToReceiveAudio: "true",
             offerToReceiveVideo: "unset",
+        },
+        api: {
+            download: "blob"
         }
     };
+    try {
+        let raw = localStorage.getItem(key);
+        if (raw) {
+            let jsonObj = JSON.parse(raw);
+            merge(jsonObj, cfg);
+        }
+    } catch (e) {
+        console.error(e);
+    }
+    return cfg;
 }
 
 function saveToStorage(key: string, data: ConfigurationRaw) {
@@ -147,6 +176,10 @@ const dataRaw = ref<ConfigurationRaw>(loadFromStorage(props.storeageKey || defau
     let data = transfer(dataRaw.value);
     emits("load", data);
 }
+
+const disableFileSystemAPI = computed(() => {
+    return !FileSystemAPIWriter.isSupported();
+});
 
 function executeSave() {
     saveToStorage(props.storeageKey || defaultKey, dataRaw.value);
@@ -169,6 +202,7 @@ function removeICEServer(item: ConfigurationRaw["webrtc"]["iceServers"][0]) {
         dataRaw.value.webrtc.iceServers.splice(index, 1);
     }
 };
+
 function addICEServer() {
     dataRaw.value.webrtc.iceServers.push({
         credential: "",
@@ -321,6 +355,15 @@ const drawerFooterStyle: CSSProperties = {
                             <RadioButton value="false">
                                 <CloseCircleOutlined />
                             </RadioButton>
+                        </RadioGroup>
+                    </FormItem>
+                </div>
+                <Divider>API</Divider>
+                <div class="config-panel-api-group">
+                    <FormItem label="Download" v-bind:name="['api', 'download']">
+                        <RadioGroup v-model:value="dataRaw.api.download">
+                            <RadioButton value="blob">Blob</RadioButton>
+                            <RadioButton value="filesystem" v-bind:disabled="disableFileSystemAPI">Filesystem</RadioButton>
                         </RadioGroup>
                     </FormItem>
                 </div>

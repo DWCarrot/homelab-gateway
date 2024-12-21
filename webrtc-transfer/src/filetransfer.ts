@@ -88,26 +88,24 @@ export class BasicFileWriter implements IFileWriter {
                 if (chunk.size !== this._last) {
                     return reject(new Error(`last chunk size mismatch: ${chunk.size} != ${this._last}`));
                 }
-                const filled = this._cache[index] !== undefined;
-                this._cache[index] = chunk;
-                return resolve(filled ? 0 : this._last);
+                
             } else {
                 if (chunk.size !== this._chunk) {
                     return reject(new Error(`chunk size mismatch: ${chunk.size} != ${this._chunk}`));
                 }
-                const filled = this._cache[index] !== undefined;
-                this._cache[index] = chunk;
-                return resolve(filled ? 0 : this._chunk);
             }
+            const filled = this._cache[index] !== undefined;
+            this._cache[index] = chunk;
+            return resolve(filled ? 0 : chunk.size);
         });
     }
 
     flush(): Promise<void> {
         if (this._cache.some((chunk) => chunk === undefined)) {
-            return Promise.reject(new Error(`missing chunk`));
+            return Promise.reject(new Error("missing chunk"));
         }
         const info = this._info!;
-        const total = new Blob(this._cache, { type: 'application/octet-stream' });
+        const total = new Blob(this._cache, { type: "application/octet-stream" });
         this._info = undefined;
         this._cache = [];
         this._chunk = 0;
@@ -128,6 +126,10 @@ export class BasicFileWriter implements IFileWriter {
     }
 }
 
+
+async function sleep(timeout: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, timeout));    
+}
 
 interface Protocol {
     uuid: string;
@@ -482,6 +484,7 @@ export class FileReceiveService {
             this._round = 0;
             this._acc = 0;
             const chunkSize = Math.min(this._limit - 32, data.chunkSize);
+            await this._writer.open(this._info, chunkSize);
             const accept: ProtocolHandshakeRecv = {
                 uuid: this._uuid,
                 type: "recv",
@@ -492,7 +495,6 @@ export class FileReceiveService {
             this._dc.send(raw);
             this._status = 2;
             console.debug("FileReceiveService::checkSave: accept", "chunksize=", chunkSize);
-            await this._writer.open(this._info, chunkSize);
         } else {
             const reject: ProtocolHandshakeRecv = {
                 uuid: data.uuid,
@@ -544,6 +546,7 @@ export class FileReceiveService {
         console.debug("FileReceiveService::checkMissing");
         const missing = await this._writer!.check();
         if (missing.length > 0) {
+            console.debug("FileReceiveService::checkMissing: missing [", missing.length, "]");
             const data: ProtocolHandshakeMissing = {
                 uuid: this._uuid!,
                 type: "missing",
@@ -553,6 +556,9 @@ export class FileReceiveService {
             this._dc.send(raw);
             this._round++;
         } else {
+            console.debug("FileReceiveService::checkMissing: finish");
+            await this._writer!.flush();
+            console.log("FileReceiveService::checkMissing: done");
             const finish: Protocol = {
                 uuid: this._uuid!,
                 type: "finish"
@@ -560,7 +566,6 @@ export class FileReceiveService {
             const raw = JSON.stringify(finish);
             this._dc.send(raw);
             this._progress!("finish", this._round, this._info!.size, this._info!.size);
-            await this._writer!.flush();
             this._status = 0;
             this._info = undefined;
             this._writer = undefined;

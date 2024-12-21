@@ -2,6 +2,7 @@
 import { computed, createVNode, defineProps, Ref, ref } from "vue";
 import { Dual } from "../webrtcsvc";
 import { context, generateUUID } from "../context";
+import { FileSystemAPIWriter } from "../fsapi-writer";
 import { Modal, Row, Col, Button, Progress } from "ant-design-vue";
 import { BasicFileWriter, FileReceiveService, FileSend, FileInfo, IFileWriter, ProgressCallback, ProgressStep } from "../filetransfer";
 
@@ -20,7 +21,7 @@ interface ProgressDisplay {
     status: ProgressStatus;
 }
 
-const maxlength = 16 * 1024;
+const maxlength = 16 * 1024 + 32;
 const status = ref<Status>(0);
 const channelNameRX = ref<string>("");
 const channelNameTX = ref<string>("");
@@ -91,6 +92,9 @@ class UpdateProgress {
                 break;
         }
         this.tgt.value = { step, round, percent: acc / total * 100, status };
+        if (step === "finish") {
+            console.info("Transfer finished", this.tgt.value);
+        }
     }
 }
 
@@ -151,7 +155,12 @@ function confirmRecvFile(fileInfo: FileInfo): Promise<[IFileWriter, ProgressCall
                 ]
             ),
             onOk() {
-                const writer = new BasicFileWriter(downloadFile);
+                let writer: IFileWriter;
+                if (context.config.api.download === "filesystem") {
+                    writer = new FileSystemAPIWriter();
+                } else {
+                    writer = new BasicFileWriter(downloadFile);
+                }
                 const u = new UpdateProgress(progressRecv);
                 resolve([writer, u.updateProgress.bind(u)]);
             },
@@ -225,8 +234,8 @@ context.webrtc.registerDataChannel(props.channelName, onConstruct, onDestruct, 3
         <Row v-if="status > 0">
             <Col flex="9">
                 <input type="file" v-on:change="onInputFileChange" />
+                <span v-if="tgtSendFileSize" class="display-file-size">{{ tgtSendFileSizeDisplay }}</span>
                 <Button v-on:click="handleUpload" v-bind:loading="transfering">Upload</Button>
-                <span v-if="tgtSendFileSize">{{ tgtSendFileSizeDisplay }}</span>
             </Col>
             <Col flex="1"> </Col>
             <Col flex="9">
@@ -253,6 +262,9 @@ context.webrtc.registerDataChannel(props.channelName, onConstruct, onDestruct, 3
 
 <style scoped>
 .progress-simple span {
+    margin-left: 5px;
+}
+.display-file-size {
     margin-left: 5px;
 }
 </style>
