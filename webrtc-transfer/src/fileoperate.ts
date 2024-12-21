@@ -197,7 +197,8 @@ export class BasicFileReader implements IFileReader {
     const testBlob = new Blob();
     if ("bytes" in testBlob) {
         BasicFileReader.readParts = (blob: Blob, start: number, end: number) => {
-            return blob.slice(start, end).bytes();
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            return (blob.slice(start, end) as any).bytes();
         };
     } else if ("arrayBuffer" in testBlob) {
         BasicFileReader.readParts = (blob: Blob, start: number, end: number) => {
