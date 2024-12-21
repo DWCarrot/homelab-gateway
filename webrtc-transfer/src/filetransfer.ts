@@ -1,131 +1,4 @@
-/* eslint-disable @stylistic/quotes */
-/**
- * 
- * @param size 
- * @param chunkSize 
- * @returns [chunkCount, lastChunkSize]
- */
-export function calcChunkInfo(size: number, chunkSize: number): [number, number] {
-    const chunkCount = Math.ceil(size / chunkSize);
-    const lastChunkSize = size % chunkSize;
-    return [chunkCount >> 0, lastChunkSize >> 0];
-}
-
-
-export interface FileInfo {
-    name: string;
-    lastModified: number;
-    webkitRelativePath: string;
-    size: number;
-    type: string;
-}
-
-export interface IFileWriter {
-
-    /**
-     * open a file for writing
-     * @param size file size
-     * @returns
-     */
-    open(fileInfo: FileInfo, chunkSize: number): Promise<boolean>;
-
-    /**
-     * write data to file
-     * @param chunk  chunk data to write. must be `chunkSize` length or less if it is the last chunk
-     * @param offset start position to write
-     * @returns number of bytes written
-     */
-    write(chunk: Blob, index: number): Promise<number>;
-
-    /**
-     * flush file
-     */
-    flush(): Promise<void>;
-
-    /**
-     * check file status and find missing chunk
-     * @returns array of chunk index that is missing
-     */
-    check(): Promise<Array<number>>;
-}
-
-
-export type FileDownloadCallback = (fileInfo: FileInfo, blob: Blob) => Promise<void>;
-
-export class BasicFileWriter implements IFileWriter {
-
-    private _info?: FileInfo;
-    private _cache: Array<Blob>;
-    private _chunk: number; // chunk size
-    private _last: number; // last chunk size
-    private _onDownload: FileDownloadCallback;
-
-    constructor(onDownload: FileDownloadCallback) {
-        this._info = undefined;
-        this._cache = [];
-        this._chunk = 0;
-        this._last = 0;
-        this._onDownload = onDownload;
-    }
-
-    open(fileInfo: FileInfo, chunkSize: number): Promise<boolean> {
-        return new Promise((resolve, reject) => {
-            this._info = fileInfo;
-            this._chunk = chunkSize;
-            const [count, last] = calcChunkInfo(this._info.size, chunkSize);
-            this._last = last;
-            this._cache = new Array(count);
-            resolve(true);
-        });
-    }
-
-    write(chunk: Blob, index: number): Promise<number> {
-        return new Promise((resolve, reject) => {
-            if (index < 0 || index >= this._cache.length) {
-                return reject(new Error(`index out of range: ${index}`));
-            }
-            if (index === this._cache.length - 1) {
-                if (chunk.size !== this._last) {
-                    return reject(new Error(`last chunk size mismatch: ${chunk.size} != ${this._last}`));
-                }
-                
-            } else {
-                if (chunk.size !== this._chunk) {
-                    return reject(new Error(`chunk size mismatch: ${chunk.size} != ${this._chunk}`));
-                }
-            }
-            const filled = this._cache[index] !== undefined;
-            this._cache[index] = chunk;
-            return resolve(filled ? 0 : chunk.size);
-        });
-    }
-
-    flush(): Promise<void> {
-        if (this._cache.some((chunk) => chunk === undefined)) {
-            return Promise.reject(new Error("missing chunk"));
-        }
-        const info = this._info!;
-        const total = new Blob(this._cache, { type: "application/octet-stream" });
-        this._info = undefined;
-        this._cache = [];
-        this._chunk = 0;
-        this._last = 0;
-        return this._onDownload(info, total);
-    }
-
-    check(): Promise<Array<number>> {
-        return new Promise((resolve, reject) => {
-            const missing: Array<number> = [];
-            for (let i = 0; i < this._cache.length; i++) {
-                if (this._cache[i] === undefined) {
-                    missing.push(i);
-                }
-            }
-            resolve(missing);
-        });
-    }
-}
-
+import { calcChunkInfo, FileInfo, IFileReader, IFileWriter } from "./fileoperate";
 
 async function sleep(timeout: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, timeout));    
@@ -145,7 +18,7 @@ interface ProtocolHandshakeSend extends Protocol {
 interface ProtocolHandshakeRecv extends Protocol {
     type: "recv";
     accept: boolean;
-    chunkSize?: number;
+    chunkSize: number;
 }
 
 interface ProtocolHandshakeMissing extends Protocol {
@@ -206,18 +79,19 @@ class RangeIterator implements IterableIterator<number> {
 
 export type ProgressStep = "handshake" | "send" | "recv" | "finish" | "cancel";
 export type ProgressCallback = (step: ProgressStep, round: number, acc: number, total: number) => void;
+export type FileReaderFactory = () => IFileReader;
 
 export class FileSend {
 
     private _dc: RTCDataChannel;
     private _limit: number;
-    private _file: File;
-    private _uuid: string;
-    private _info: FileInfo;
-    private _count: number;
-    private _chunkSize: number;
-    private _lastChunkSize: number;
     private _status: 0 | 1 | 2 | 3 | -1; // 0: idle, 1: handshaking, 2: sending, 3: finished
+
+    private _uuid: string;
+    private _file: File;
+    private _reader: IFileReader;
+    private _info?: FileInfo;
+
     private _cb?: {
         resolve: (value: boolean) => void;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -226,26 +100,18 @@ export class FileSend {
     };
     private _round: number;
 
-    constructor(file: File, uuid: string, dc: RTCDataChannel, limit?: number) {
+    constructor(file: File, reader: IFileReader, uuid: string, dc: RTCDataChannel, limit?: number) {
         dc.binaryType = "arraybuffer";
         this._dc = dc;
         this._limit = limit || (16 * 1024);
-        this._file = file;
-        this._uuid = uuid;
-        this._info = {
-            name: file.name,
-            lastModified: file.lastModified,
-            webkitRelativePath: file.webkitRelativePath,
-            size: file.size,
-            type: file.type
-        };
-        this._count = 0;
-        this._chunkSize = this._limit - 32;
-        this._lastChunkSize = 0;
         this._status = 0;
+        this._uuid = uuid;
+        this._file = file;
+        this._reader = reader;
         this._cb = undefined;
         this._round = 0;
         this.bind(dc);
+        this._reader.chunkSize = this._limit - 32;
     }
 
     send(progress: ProgressCallback): Promise<boolean> {
@@ -263,14 +129,15 @@ export class FileSend {
         this.unbind(this._dc);
     }
 
-    private sendHandshake() {
+    private async sendHandshake() {
         console.debug("FileSend::sendHandshake");
         try {
+            this._info = await this._reader.open(this._file);
             const data: ProtocolHandshakeSend = {
                 uuid: this._uuid,
                 type: "send",
                 info: this._info,
-                chunkSize: this._chunkSize
+                chunkSize: this._reader.chunkSize
             };
             const raw = JSON.stringify(data);
             this._dc.send(raw);
@@ -295,13 +162,10 @@ export class FileSend {
             const recv = data as ProtocolHandshakeRecv;
             if (recv.accept) {
                 if (recv.chunkSize !== undefined) {
-                    if (recv.chunkSize > 0 && recv.chunkSize < this._chunkSize) {
-                        this._chunkSize = recv.chunkSize;
+                    if (recv.chunkSize > 0 && recv.chunkSize < this._reader.chunkSize) {
+                        this._reader.chunkSize = recv.chunkSize;
                     }
                 }
-                const [count, last] = calcChunkInfo(this._info.size, this._chunkSize);
-                this._lastChunkSize = last;
-                this._count = count;
                 this._status = 2;
                 this.send0(this._round++)
                     .catch((e) => {
@@ -313,7 +177,7 @@ export class FileSend {
                     });
             } else {
                 this._status = 0;
-                this._cb!.progress("cancel", 0, 0, this._info.size);
+                this._cb!.progress("cancel", 0, 0, this._info!.size);
                 this._cb!.resolve(false);
                 this._cb = undefined;
             }
@@ -332,10 +196,18 @@ export class FileSend {
                 throw new Error(`uuid mismatch: ${data.uuid} != ${this._uuid}`);
             }
             if (data.type === "finish") {
-                this._status = 3;
-                this._cb!.progress("finish", 0, this._info.size, this._info.size);
-                this._cb!.resolve(true);
-                this._cb = undefined;
+                this._reader.close()
+                    .then(() => {;
+                        this._status = 3;
+                        this._cb!.progress("finish", 0, this._reader.chunkSize, this._reader.chunkSize);
+                        this._cb!.resolve(true);
+                        this._cb = undefined;
+                    })
+                    .catch((e) => {
+                        this._status = -1;
+                        this._cb!.reject(e);
+                        this._cb = undefined;
+                    });
             } else if (data.type === "missing") {
                 const missing = data as ProtocolHandshakeMissing;
                 this.send0(this._round++, missing.indices)
@@ -358,23 +230,20 @@ export class FileSend {
 
     private async send0(round: number, indices?: Array<number>) {
         console.debug("FileSend::send0", round);
-        let total = this._info.size;
+        let total = this._info!.size;
         if (indices) {
-            if (indices.lastIndexOf(this._count - 1) < 0) {
-                total = indices.length * this._chunkSize;
+            if (indices.lastIndexOf(this._reader.chunkCount - 1) < 0) {
+                total = indices.length * this._reader.chunkSize;
             } else {
-                total = (indices.length - 1) * this._chunkSize + this._lastChunkSize;
+                total = (indices.length - 1) * this._reader.chunkSize + this._reader.lastChunkSize;
             }
         }
         let acc = 0;
-        for (const i of (indices || new RangeIterator(this._count))) {
-            const start = i * this._chunkSize;
-            const end = Math.min(start + this._chunkSize, this._info.size);
-            const chunk = this._file.slice(start, end);
-            const data = await chunk.arrayBuffer();
+        for (const i of (indices || new RangeIterator(this._reader.chunkCount))) {
+            const data = await this._reader.read(i);
             const buffer = encode(i, new Uint8Array(data));
             this._dc.send(buffer);
-            acc += chunk.size;
+            acc += data.length;
             this._cb!.progress("send", round, acc, total);
         }
         const finish: Protocol = {
@@ -393,6 +262,9 @@ export class FileSend {
     }
 
     private unbind(dc: RTCDataChannel) {
+        if (this._reader) {
+            this._reader.close();
+        }
         dc.onclose = null;
         dc.onclosing = null;
         dc.onerror = null;
@@ -436,14 +308,13 @@ export class FileReceiveService {
     private _dc: RTCDataChannel;
     private _limit: number;
     private _onSave: FileSaveCallback;
+    private _status: 0 | 1 | 2 | -1; // 0: idle, 1. handshaking, 2: receiving
+
     private _uuid?: string;
     private _info?: FileInfo;
     private _writer?: IFileWriter;
     private _progress?: ProgressCallback;
     private _round: number = 0;
-    private _acc: number = 0;
-    private _status: 0 | 1 | 2 | -1; // 0: idle, 1. handshaking, 2: receiving
-
 
     constructor(onSave: FileSaveCallback, dc: RTCDataChannel, limit?: number) {
         dc.binaryType = "arraybuffer";
@@ -452,6 +323,14 @@ export class FileReceiveService {
         this._limit = limit || (16 * 1024);
         this._status = 0;
         this.bind(dc);
+    }
+
+    private resetRecv() {
+        this._uuid = undefined;
+        this._info = undefined;
+        this._writer = undefined;
+        this._progress = undefined;
+        this._round = 0;
     }
 
     private recvHandshake(raw: string) {
@@ -482,7 +361,6 @@ export class FileReceiveService {
             this._writer = t[0];
             this._progress = t[1];
             this._round = 0;
-            this._acc = 0;
             const chunkSize = Math.min(this._limit - 32, data.chunkSize);
             await this._writer.open(this._info, chunkSize);
             const accept: ProtocolHandshakeRecv = {
@@ -499,7 +377,8 @@ export class FileReceiveService {
             const reject: ProtocolHandshakeRecv = {
                 uuid: data.uuid,
                 type: "recv",
-                accept: false
+                accept: false,
+                chunkSize: -1
             };
             const raw = JSON.stringify(reject);
             this._dc.send(raw);
@@ -511,8 +390,7 @@ export class FileReceiveService {
     private recvData(raw: ArrayBuffer) {
         try {
             const [index, chunk] = decode(raw);
-            const data = new Blob([chunk]);
-            this.writeData(this._round, index, data)
+            this.writeData(this._round, index, chunk)
                 .catch((e) => {
                     console.error(e);
                 });
@@ -521,12 +399,9 @@ export class FileReceiveService {
         }
     }
 
-    private async writeData(round: number, index: number, chunk: Blob) {
+    private async writeData(round: number, index: number, chunk: Uint8Array) {
         const n = await this._writer!.write(chunk, index);
-        this._acc += n;
-        if (n > 0) {
-            this._progress!("recv", round, this._acc, this._info!.size);
-        }
+        this._progress!("recv", round, n, this._writer!.fileSize);
     }
 
     private recvFinish(raw: string) {
@@ -571,7 +446,6 @@ export class FileReceiveService {
             this._writer = undefined;
             this._progress = undefined;
             this._round = 0;
-            this._acc = 0;
         }
     }
 

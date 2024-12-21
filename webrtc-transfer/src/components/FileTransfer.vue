@@ -4,7 +4,8 @@ import { Dual } from "../webrtcsvc";
 import { context, generateUUID } from "../context";
 import { FileSystemAPIWriter } from "../fsapi-writer";
 import { Modal, Row, Col, Button, Progress } from "ant-design-vue";
-import { BasicFileWriter, FileReceiveService, FileSend, FileInfo, IFileWriter, ProgressCallback, ProgressStep } from "../filetransfer";
+import { FileReceiveService, FileSend, ProgressCallback, ProgressStep } from "../filetransfer";
+import { BasicFileReader, BasicFileWriter, FileInfo, IFileWriter } from "../fileoperate";
 
 const props = defineProps<{
     channelName: string;
@@ -102,7 +103,8 @@ class UpdateProgress {
 async function handleUpload() {
     if (tgtSendFile && chTX) {
         const fileUUID = generateUUID();
-        sender = new FileSend(tgtSendFile, fileUUID, chTX, maxlength);
+        const reader = new BasicFileReader();
+        sender = new FileSend(tgtSendFile, reader, fileUUID, chTX, maxlength);
         transfering.value = true;
         const u = new UpdateProgress(progressSend);
         try {

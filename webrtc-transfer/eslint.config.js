@@ -10,6 +10,7 @@ export default [
     {
         ignores: [
             "dist/",
+            ".vite-inspect/",
         ],
     },
     { files: ["**/*.{js,mjs,cjs,ts,vue}"] },
