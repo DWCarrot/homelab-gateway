@@ -85,10 +85,15 @@ export interface IFileWriter {
     write(chunk: Uint8Array, index: number): Promise<number>;
 
     /**
-     * flush file
+     * flush file writing
+     */
+    flush(): Promise<void>;
+
+    /**
+     * close file writing
      * @returns true if all chunks are written
      */
-    flush(): Promise<boolean>;
+    close(): Promise<boolean>;
 
     /**
      * check file status and find missing chunk
@@ -101,6 +106,8 @@ export interface IFileWriter {
 
 export class BasicFileReader implements IFileReader {
 
+    static readParts: (blob: Blob, start: number, end: number) => Promise<Uint8Array> = Promise.reject;
+    
     private _info?: FileInfo;
     private _ifile?: File;
     private _chunkSize: number;
@@ -173,7 +180,7 @@ export class BasicFileReader implements IFileReader {
         }
         const start = index * this._chunkSize;
         const end = index === (this.chunkCount - 1) ? (start + this._lastChunkSize) : (start + this._chunkSize);
-        return this._ifile.slice(start, end).bytes();
+        return BasicFileReader.readParts(this._ifile, start, end);
     }
 
     close(): Promise<void> {
@@ -184,12 +191,23 @@ export class BasicFileReader implements IFileReader {
         this._chunkCount = -1;
         return Promise.resolve();
     }
+}
 
+{
+    const testBlob = new Blob();
+    if ("bytes" in testBlob) {
+        BasicFileReader.readParts = (blob: Blob, start: number, end: number) => {
+            return blob.slice(start, end).bytes();
+        };
+    } else if ("arrayBuffer" in testBlob) {
+        BasicFileReader.readParts = (blob: Blob, start: number, end: number) => {
+            return blob.slice(start, end).arrayBuffer().then((buffer) => new Uint8Array(buffer));
+        };
+    }
 }
 
 
-
-export type FileDownloadCallback = (fileInfo: FileInfo, blob: Blob) => Promise<void>;
+export type FileDownloadCallback = (fileInfo: FileInfo, blob: Blob) => void;
 
 export class BasicFileWriter implements IFileWriter {
 
@@ -262,7 +280,11 @@ export class BasicFileWriter implements IFileWriter {
         return Promise.resolve(this._acc);
     }
 
-    flush(): Promise<boolean> {
+    flush(): Promise<void> {
+        return Promise.resolve();
+    }
+
+    close(): Promise<boolean> {
         const info = this._info;
         if (info) {
             const filled = this._cache.every((chunk) => chunk !== undefined);
@@ -272,7 +294,8 @@ export class BasicFileWriter implements IFileWriter {
             this._acc = 0;
             this._chunkSize = 0;
             this._lastChunkSize = 0;
-            return this._onDownload(info, total).then(() => filled);
+            this._onDownload(info, total);
+            return Promise.resolve(filled);
         } else {
             return Promise.reject(new Error("file not opened"));
         }

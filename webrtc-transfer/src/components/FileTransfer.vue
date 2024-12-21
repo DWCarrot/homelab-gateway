@@ -4,7 +4,7 @@ import { Dual } from "../webrtcsvc";
 import { context, generateUUID } from "../context";
 import { FileSystemAPIWriter } from "../fsapi-writer";
 import { Modal, Row, Col, Button, Progress } from "ant-design-vue";
-import { FileReceiveService, FileSend, ProgressCallback, ProgressStep } from "../filetransfer";
+import { FileReceiveService, FileSend, ProgressCallback, ProgressStep, TransferOptions } from "../filetransfer";
 import { BasicFileReader, BasicFileWriter, FileInfo, IFileWriter } from "../fileoperate";
 
 const props = defineProps<{
@@ -16,13 +16,17 @@ type Status = 0 | 1 | 2; // 0: idle, 1: opened, 2: closed
 type ProgressStatus = "success" | "exception" | "normal" | "active";
 
 interface ProgressDisplay {
-    step: string;
+    step: ProgressStep;
     round: number;
     percent: number;
     status: ProgressStatus;
 }
 
-const maxlength = 16 * 1024 + 32;
+const transferOptions: TransferOptions = {
+    limit: 1024 * 16 + 32,
+    checkInterval: 32,
+    pauseThreshold: [128, 256],
+};
 const status = ref<Status>(0);
 const channelNameRX = ref<string>("");
 const channelNameTX = ref<string>("");
@@ -78,11 +82,14 @@ class UpdateProgress {
             case "recv":
                 {
                     const now = new Date();
-                    if (now.getTime() - this.lastUpdate.getTime() < 1000) {
+                    if (acc < total && now.getTime() - this.lastUpdate.getTime() < 1000) {
                         return;
                     }
                     this.lastUpdate = now;
                 }
+                status = "normal";
+                break;
+            case "pause":
                 status = "normal";
                 break;
             case "finish":
@@ -93,9 +100,6 @@ class UpdateProgress {
                 break;
         }
         this.tgt.value = { step, round, percent: acc / total * 100, status };
-        if (step === "finish") {
-            console.info("Transfer finished", this.tgt.value);
-        }
     }
 }
 
@@ -104,7 +108,7 @@ async function handleUpload() {
     if (tgtSendFile && chTX) {
         const fileUUID = generateUUID();
         const reader = new BasicFileReader();
-        sender = new FileSend(tgtSendFile, reader, fileUUID, chTX, maxlength);
+        sender = new FileSend(tgtSendFile, reader, fileUUID, chTX, transferOptions);
         transfering.value = true;
         const u = new UpdateProgress(progressSend);
         try {
@@ -185,7 +189,7 @@ function onConstruct(dc: Dual<RTCDataChannel>) {
     channelNameTX.value = chTX?.label || "";
     status.value = 1;
     if (chRX) {
-        receiver = new FileReceiveService(confirmRecvFile, chRX, maxlength);
+        receiver = new FileReceiveService(confirmRecvFile, chRX, transferOptions);
     }
 }
 
@@ -245,19 +249,31 @@ context.webrtc.registerDataChannel(props.channelName, onConstruct, onDestruct, 3
             </Col>
         </Row>
         <Row>
-            <Col flex="9">
+            <Col flex="8">
                 <div v-if="progressSend">
-                    <div>Send Progress</div>
+                    <div class="progress-simple">
+                        <span>Send Progress</span>
+                        <span>[</span>
+                        <span>{{ progressSend.step }}</span>
+                        <span>]</span>
+                    </div>
                     <Progress v-bind:percent="progressSend.percent" v-bind:status="progressSend.status" v-bind:format="percentFormatter" />
                 </div>
             </Col>
             <Col flex="1"> </Col>
-            <Col flex="9">
+            <Col flex="1"> </Col>
+            <Col flex="8">
                 <div v-if="progressRecv">
-                    <div>Receive Progress</div>
+                    <div class="progress-simple">
+                        <span>Receive Progress</span>
+                        <span>[</span>
+                        <span>{{ progressRecv.step }}</span>
+                        <span>]</span>
+                    </div>
                     <Progress v-bind:percent="progressRecv.percent" v-bind:status="progressRecv.status" v-bind:format="percentFormatter" />
                 </div>
             </Col>
+            <Col flex="1"> </Col>
         </Row>
     </div>
 </template>

@@ -6,7 +6,7 @@ async function sleep(timeout: number): Promise<void> {
 
 interface Protocol {
     uuid: string;
-    type: "send" | "recv" | "missing" | "finish";
+    type: "send" | "recv" | "missing" | "checkpoint" | "finish";
 }
 
 interface ProtocolHandshakeSend extends Protocol {
@@ -24,6 +24,12 @@ interface ProtocolHandshakeRecv extends Protocol {
 interface ProtocolHandshakeMissing extends Protocol {
     type: "missing";
     indices: number[];
+}
+
+interface ProtocolCheckpoint extends Protocol {
+    type: "checkpoint";
+    round: number;
+    count: number;  // received chunks since last checkpoint
 }
 
 
@@ -77,20 +83,48 @@ class RangeIterator implements IterableIterator<number> {
     }
 }
 
-export type ProgressStep = "handshake" | "send" | "recv" | "finish" | "cancel";
+export type ProgressStep = "handshake" | "send" | "recv" | "pause" | "finish" | "cancel";
 export type ProgressCallback = (step: ProgressStep, round: number, acc: number, total: number) => void;
 export type FileReaderFactory = () => IFileReader;
 
+export interface TransferOptions {
+    limit?: number; // webrtc data channel packet limit
+    checkInterval?: number; // check interval for receiving; count chunks
+    pauseThreshold?: [number, number]; // pause threshold; [low, high]; when send_count - recv_count > high, pause; when send_count - recv_count <= low, resume
+}
+
+interface TransferOptionsImpl extends TransferOptions {
+    limit: number;
+    checkInterval: number;
+    pauseThreshold: [number, number];
+}
+
+function getTransferOptions(options: TransferOptions): TransferOptionsImpl {
+    options.limit = options.limit || (16 * 1024);
+    options.checkInterval = options.checkInterval || 10;
+    options.pauseThreshold = options.pauseThreshold || [options.checkInterval * 2, options.checkInterval * 4];
+    return options as TransferOptionsImpl;
+}
+
 export class FileSend {
 
+    private _options: TransferOptionsImpl;
     private _dc: RTCDataChannel;
-    private _limit: number;
     private _status: 0 | 1 | 2 | 3 | -1; // 0: idle, 1: handshaking, 2: sending, 3: finished
 
     private _uuid: string;
     private _file: File;
     private _reader: IFileReader;
     private _info?: FileInfo;
+    private _round: number;
+
+    private _sendCount: number;
+    private _recvCount: number;
+    private _pauseCb?: {
+        resolve: () => void;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        reject: (reason?: any) => void;
+    };
 
     private _cb?: {
         resolve: (value: boolean) => void;
@@ -98,20 +132,22 @@ export class FileSend {
         reject: (reason?: any) => void;
         progress: ProgressCallback;
     };
-    private _round: number;
 
-    constructor(file: File, reader: IFileReader, uuid: string, dc: RTCDataChannel, limit?: number) {
+    constructor(file: File, reader: IFileReader, uuid: string, dc: RTCDataChannel, options?: TransferOptions) {
         dc.binaryType = "arraybuffer";
+        this._options = getTransferOptions(options || {});
         this._dc = dc;
-        this._limit = limit || (16 * 1024);
         this._status = 0;
         this._uuid = uuid;
         this._file = file;
         this._reader = reader;
-        this._cb = undefined;
         this._round = 0;
+        this._sendCount = 0;
+        this._recvCount = 0;
+        this._pauseCb = undefined;
+        this._cb = undefined;
         this.bind(dc);
-        this._reader.chunkSize = this._limit - 32;
+        this._reader.chunkSize = this._options.limit - 32;
     }
 
     send(progress: ProgressCallback): Promise<boolean> {
@@ -149,7 +185,7 @@ export class FileSend {
         }
     }
 
-    private recvHandshake(raw: string) {
+    private async recvHandshake(raw: string) {
         console.debug("FileSend::recvHandshake");
         try {
             const data = JSON.parse(raw) as Protocol;
@@ -167,14 +203,7 @@ export class FileSend {
                     }
                 }
                 this._status = 2;
-                this.send0(this._round++)
-                    .catch((e) => {
-                        if (this._cb) {
-                            this._status = -1;
-                            this._cb.reject(e);
-                            this._cb = undefined;
-                        }
-                    });
+                await this.send0(this._round);
             } else {
                 this._status = 0;
                 this._cb!.progress("cancel", 0, 0, this._info!.size);
@@ -182,13 +211,15 @@ export class FileSend {
                 this._cb = undefined;
             }
         } catch (e) {
-            this._status = -1;
-            this._cb!.reject(e);
-            this._cb = undefined;
+            if (this._cb) {
+                this._status = -1;
+                this._cb.reject(e);
+                this._cb = undefined;
+            }
         }
     }
 
-    private recvMissingOrFinish(raw: string) {
+    private async recvInSending(raw: string) {
         console.debug("FileSend::recvMissingOrFinish");
         try {
             const data = JSON.parse(raw) as Protocol;
@@ -196,35 +227,34 @@ export class FileSend {
                 throw new Error(`uuid mismatch: ${data.uuid} != ${this._uuid}`);
             }
             if (data.type === "finish") {
-                this._reader.close()
-                    .then(() => {;
-                        this._status = 3;
-                        this._cb!.progress("finish", 0, this._reader.chunkSize, this._reader.chunkSize);
-                        this._cb!.resolve(true);
-                        this._cb = undefined;
-                    })
-                    .catch((e) => {
-                        this._status = -1;
-                        this._cb!.reject(e);
-                        this._cb = undefined;
-                    });
+                await this._reader.close();
+                this._status = 3;
+                this._cb!.progress("finish", 0, this._reader.chunkSize, this._reader.chunkSize);
+                this._cb!.resolve(true);
+                this._cb = undefined;
             } else if (data.type === "missing") {
                 const missing = data as ProtocolHandshakeMissing;
-                this.send0(this._round++, missing.indices)
-                    .catch((e) => {
-                        if (this._cb) {
-                            this._status = -1;
-                            this._cb.reject(e);
-                            this._cb = undefined;
-                        }
-                    });
+                this._round++;
+                await this.send0(this._round, missing.indices);
+            } else if (data.type === "checkpoint") {
+                const checkpoint = data as ProtocolCheckpoint;
+                if (this._round === checkpoint.round) {
+                    this._recvCount += checkpoint.count;
+                    if (this._pauseCb && (this._sendCount - this._recvCount) <= this._options.pauseThreshold[0]) {
+                        console.debug(`FileSend::recvInSending: resume  @${this._round} send=${this._sendCount} recv=${this._recvCount}`);
+                        this._pauseCb.resolve();
+                        this._pauseCb = undefined;
+                    }
+                }
             } else {
                 throw new Error(`invalid protocol type: ${data.type}`);
             }
         } catch (e) {
-            this._status = -1;
-            this._cb!.reject(e);
-            this._cb = undefined;
+            if (this._cb) {
+                this._status = -1;
+                this._cb.reject(e);
+                this._cb = undefined;
+            }
         }
     }
 
@@ -239,12 +269,17 @@ export class FileSend {
             }
         }
         let acc = 0;
+        this._sendCount = 0;
         for (const i of (indices || new RangeIterator(this._reader.chunkCount))) {
             const data = await this._reader.read(i);
-            const buffer = encode(i, new Uint8Array(data));
+            const buffer = encode(i, data);
             this._dc.send(buffer);
             acc += data.length;
             this._cb!.progress("send", round, acc, total);
+            this._sendCount++;
+            if (this._sendCount - this._recvCount > this._options.pauseThreshold[1]) {
+                await this.makePausePromise();
+            }
         }
         const finish: Protocol = {
             type: "finish",
@@ -252,6 +287,13 @@ export class FileSend {
         };
         const raw = JSON.stringify(finish);
         this._dc.send(raw);
+    }
+
+    private makePausePromise(): Promise<void> {
+        console.debug(`FileSend::makePausePromise @${this._round} send=${this._sendCount} recv=${this._recvCount}`);
+        return new Promise((resolve, reject) => {
+            this._pauseCb = { resolve, reject };
+        });
     }
 
     private bind(dc: RTCDataChannel) {
@@ -281,7 +323,7 @@ export class FileSend {
             }
         } else if (this._status === 2) {
             if (typeof data === "string") {
-                this.recvMissingOrFinish(data);
+                this.recvInSending(data);
             } else {
                 console.warn("unexpected data type for sending");
             }
@@ -306,7 +348,7 @@ export type FileSaveCallback = (fileInfo: FileInfo) => Promise<[IFileWriter, Pro
 export class FileReceiveService {
 
     private _dc: RTCDataChannel;
-    private _limit: number;
+    private _options: TransferOptionsImpl;
     private _onSave: FileSaveCallback;
     private _status: 0 | 1 | 2 | -1; // 0: idle, 1. handshaking, 2: receiving
 
@@ -315,12 +357,14 @@ export class FileReceiveService {
     private _writer?: IFileWriter;
     private _progress?: ProgressCallback;
     private _round: number = 0;
+    private _recvCount: number = 0;
+    private _lastRecvCount: number = 0;
 
-    constructor(onSave: FileSaveCallback, dc: RTCDataChannel, limit?: number) {
+    constructor(onSave: FileSaveCallback, dc: RTCDataChannel, options?: TransferOptions) {
         dc.binaryType = "arraybuffer";
         this._onSave = onSave;
         this._dc = dc;
-        this._limit = limit || (16 * 1024);
+        this._options = getTransferOptions(options || {});
         this._status = 0;
         this.bind(dc);
     }
@@ -331,9 +375,11 @@ export class FileReceiveService {
         this._writer = undefined;
         this._progress = undefined;
         this._round = 0;
+        this._recvCount = 0;
+        this._lastRecvCount = 0;
     }
 
-    private recvHandshake(raw: string) {
+    private async recvHandshake(raw: string) {
         console.debug("FileReceiveService::recvHandshake");
         try {
             const data = JSON.parse(raw) as Protocol;
@@ -341,11 +387,12 @@ export class FileReceiveService {
                 throw new Error(`invalid handshake type: ${data.type}`);
             }
             this._status = 1;
-            this.checkSave(data as ProtocolHandshakeSend)
-                .catch((e) => {
-                    console.error(e);
-                    this._status = -1;
-                });
+            try {
+                await this.checkSave(data as ProtocolHandshakeSend);
+            } catch (e) {
+                console.error(e);
+                this._status = -1;
+            };
         } catch (e) {
             this._status = 0; // still waiting for handshake
             console.error(e);
@@ -361,7 +408,7 @@ export class FileReceiveService {
             this._writer = t[0];
             this._progress = t[1];
             this._round = 0;
-            const chunkSize = Math.min(this._limit - 32, data.chunkSize);
+            const chunkSize = Math.min(this._options.limit - 32, data.chunkSize);
             await this._writer.open(this._info, chunkSize);
             const accept: ProtocolHandshakeRecv = {
                 uuid: this._uuid,
@@ -372,6 +419,8 @@ export class FileReceiveService {
             const raw = JSON.stringify(accept);
             this._dc.send(raw);
             this._status = 2;
+            this._recvCount = 0;
+            this._lastRecvCount = 0;
             console.debug("FileReceiveService::checkSave: accept", "chunksize=", chunkSize);
         } else {
             const reject: ProtocolHandshakeRecv = {
@@ -387,31 +436,48 @@ export class FileReceiveService {
         }
     }
 
-    private recvData(raw: ArrayBuffer) {
+    private async recvData(raw: ArrayBuffer) {
         try {
             const [index, chunk] = decode(raw);
-            this.writeData(this._round, index, chunk)
-                .catch((e) => {
-                    console.error(e);
-                });
+            await this.writeData(this._round, index, chunk);
         } catch (e) {
             console.error(e);
         }
     }
 
+    private sendCheckpoint(recvCount: number) {
+        console.debug(`FileReceiveService::sendCheckpoint @${this._round} recv=${recvCount} / ${this._lastRecvCount}`);
+        const checkpoint: ProtocolCheckpoint = {
+            uuid: this._uuid!,
+            type: "checkpoint",
+            count: recvCount - this._lastRecvCount,
+            round: this._round,
+        };
+        this._lastRecvCount = recvCount;
+        const raw = JSON.stringify(checkpoint);
+        this._dc.send(raw);
+    }
+
     private async writeData(round: number, index: number, chunk: Uint8Array) {
         const n = await this._writer!.write(chunk, index);
         this._progress!("recv", round, n, this._writer!.fileSize);
+        const recvCount = ++this._recvCount;
+        if (recvCount % this._options.checkInterval === 0) {
+            await this._writer!.flush();
+            this.sendCheckpoint(recvCount);
+        }
     }
 
-    private recvFinish(raw: string) {
+    private async recvFinish(raw: string) {
         console.debug("FileReceiveService::recvFinish");
         try {
             const data = JSON.parse(raw) as Protocol;
             if (!(data.type === "finish")) {
                 throw new Error(`invalid protocol type: ${data.type}`);
             }
-            this.checkMissing();
+            await this._writer!.flush();
+            this.sendCheckpoint(this._recvCount);
+            await this.checkMissing();
         } catch (e) {
             console.error(e);
         }
@@ -432,7 +498,7 @@ export class FileReceiveService {
             this._round++;
         } else {
             console.debug("FileReceiveService::checkMissing: finish");
-            await this._writer!.flush();
+            await this._writer!.close();
             console.log("FileReceiveService::checkMissing: done");
             const finish: Protocol = {
                 uuid: this._uuid!,
