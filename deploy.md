@@ -1,5 +1,159 @@
 ## OpenResty Gateway & WebDAV
 
+
+### CA 和 TLS 证书
+
+#### Root CA 创建
+
+_并不是要你自己搭建一个 CA 中心，这里的 CA 其实指的是创建自己的 CA 根证书，这样可以给后续步骤签署证书_
+
+1. 创建 Root CA 密钥
+
+   准备: 创建文件夹
+
+   ```shell
+   cd homelab-gateway
+   mkdir build/ca
+   mkdir build/ca/private
+   mkdir build/ca/certs
+   ```
+
+   使用 RSA 算法
+
+   ```shell
+   openssl genrsa -out build/ca/private/CA.key.pem 4096
+   ```
+
+   或使用 椭圆曲线算法
+
+   ```shell
+   openssl ecparam -genkey -name secp256k1 -out build/ca/private/CA.key.pem
+   ```
+
+   __该密钥需要谨慎保存, 上传时务必检查其被排除, 并做好备份__
+
+2. 生成 CA 自签名证书
+
+   创建证书申请文件 & 自签
+
+   ```shell
+   openssl req -new -x509 -days 3650 -key build/ca/private/CA.key.pem -out build/ca/certs/HomeLabCA.crt
+   ```
+
+   信息
+   ```shell
+   You are about to be asked to enter information that will be incorporated
+   into your certificate request.
+   What you are about to enter is what is called a Distinguished Name or a DN.
+   There are quite a few fields but you can leave some blank
+   For some fields there will be a default value,
+   If you enter '.', the field will be left blank.
+   -----
+   Country Name (2 letter code) [AU]:CN
+   State or Province Name (full name) [Some-State]:Shanghai
+   Locality Name (eg, city) []:Shanghai
+   Organization Name (eg, company) [Internet Widgits Pty Ltd]:Ank Tech
+   Organizational Unit Name (eg, section) []:Ank Tech
+   Common Name (e.g. server FQDN or YOUR name) []:Carota's HomeLab
+   Email Address []:
+   ```
+
+3. 生成自签 SSL 证书
+
+   预定有效日期 1年 (375天) 因此文件名后的日期按实际情况修改
+
+   (1) 准备文件夹
+
+      ```shell
+      cd homelab-gateway
+      mkdir build/ssl
+      mkdir build/ssl/private
+      mkdir build/ssl/certs
+      mkdir build/csr
+      ```
+
+   (2) 生成服务器密钥
+
+      使用 RSA 算法
+
+      ```shell
+      openssl genrsa -out build/ssl/private/homelab-server.20250104.key.pem 4096
+      ```
+
+      或使用 椭圆曲线算法
+
+      ```shell
+      openssl ecparam -genkey -name secp256k1 -out build/ssl/private/homelab-server.20250104.key.pem
+      ```
+
+      __该密钥需要谨慎保存, 上传时务必检查其被排除, 并做好备份__
+
+   (3) 创建服务器SSL证书生成请求
+
+      ```shell
+      openssl req -new -key build/ssl/private/homelab-server.20250104.key.pem -out build/ssl/private/homelab-server.20250104.csr
+      ```
+
+      信息
+
+      ```
+      You are about to be asked to enter information that will be incorporated
+      into your certificate request.
+      What you are about to enter is what is called a Distinguished Name or a DN.
+      There are quite a few fields but you can leave some blank
+      For some fields there will be a default value,
+      If you enter '.', the field will be left blank.
+      -----
+      Country Name (2 letter code) [AU]:CN
+      State or Province Name (full name) [Some-State]:Shanghai
+      Locality Name (eg, city) []:Shanghai
+      Organization Name (eg, company) [Internet Widgits Pty Ltd]:Ank Tech
+      Organizational Unit Name (eg, section) []:Ank Tech
+      Common Name (e.g. server FQDN or YOUR name) []:Carota's HomeLab Gateway
+      Email Address []:
+
+      Please enter the following 'extra' attributes
+      to be sent with your certificate request
+      A challenge password []:
+      An optional company name []:
+      ```
+
+   (4) 创建证书拓展文件 `build/ssl/homelab-server.ext`
+
+      ```
+      authorityKeyIdentifier=keyid,issuer
+      basicConstraints=CA:FALSE
+      keyUsage = digitalSignature, nonRepudiation, keyEncipherment, dataEncipherment
+      subjectAltName = @alt_names
+
+      [alt_names]
+      DNS.1 = *.rockpi.homelab
+      DNS.2 = rockpi.homelab
+
+      ```
+
+   (5) 使用根证书颁发机构对证书进行签发 
+      
+      ```shell
+      openssl x509 -req -in build/ssl/private/homelab-server.20250104.csr -CA build/ca/certs/HomeLabCA.crt -CAkey build/ca/private/CA.key.pem -CAcreateserial -out build/ssl/certs/homelab-server.20250104.crt -days 375 -sha256 -extfile build/ssl/homelab-server.ext
+
+      ```
+
+      此时可以验证证书
+
+      ```shell
+      openssl verify -CAfile build/ca/certs/HomeLabCA.crt build/ssl/certs/homelab-server.20250104.crt
+      ```
+
+   (6) 部署
+
+      ```shell
+      sudo mkdir /usr/local/openresty/nginx/ssl
+      sudo cp build/ssl/certs/homelab-server.20250104.crt /usr/local/openresty/nginx/ssl/server.crt
+      sudo cp build/ssl/private/homelab-server.20250104.key.pem /usr/local/openresty/nginx/ssl/server.key
+
+      ```
+
 ### 安装
 
 编译安装
