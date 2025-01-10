@@ -267,9 +267,15 @@ python3 -m tools.template
 
    ```bash
    #sudo groupadd --system nginx
+
+   # list all users
+   cat /etc/passwd
    
    sudo useradd --system --no-create-home --home /nonexistent --comment "nginx user" --shell /usr/sbin/nologin nginx
    
+   # list all groups for nginx
+   groups nginx
+
    ```
 
    webdav 文件夹需要满足 `nginx` 用户权限需求
@@ -314,6 +320,7 @@ python3 -m tools.template
    > Re-type new password:
    ```
 
+   test 账号: `testtest:testtest01`
    
 
 9. ~~安装 Lua 包管理器~~
