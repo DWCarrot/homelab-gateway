@@ -177,3 +177,6 @@ cython_debug/
 # Log files
 logs
 logs/
+
+
+!lua-resty-peerjs-server/lib/
