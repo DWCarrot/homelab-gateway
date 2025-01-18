@@ -1,2 +1,2 @@
 # homelab-gateway
-self-use openresty server &amp; deployment methods for my homelab
+self-use ~~openresty~~ caddy server &amp; deployment methods for my homelab
